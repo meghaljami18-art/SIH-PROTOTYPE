@@ -4,8 +4,9 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import { desc, eq } from 'drizzle-orm';
-import { db } from './src/db/index.ts';
+import { db, pool } from './src/db/index.ts';
 import { auditEvents, inspections, rulesMatrix, users } from './src/db/schema.ts';
+import { RULES, RULESET_VERSION } from './src/lib/constants.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
@@ -1149,8 +1150,112 @@ app.get('/api/audit-events', async (req: Request, res: Response) => {
   }
 });
 
+// Automated PostgreSQL Schema & Rules Bootstrap for Cloud Deployments
+async function ensureDatabaseBootstrap() {
+  try {
+    console.log('[COMPLYSCAN] Checking PostgreSQL schema...');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id serial PRIMARY KEY,
+        uid text NOT NULL UNIQUE,
+        email text NOT NULL,
+        name text NOT NULL,
+        role text NOT NULL DEFAULT 'COMPLIANCE_ANALYST',
+        created_at timestamp DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS inspections (
+        id text PRIMARY KEY,
+        user_id text,
+        status text NOT NULL DEFAULT 'DRAFT',
+        package_context text NOT NULL DEFAULT 'RETAIL',
+        commodity_type text NOT NULL,
+        date_required text NOT NULL DEFAULT 'UNKNOWN',
+        medical_device text NOT NULL DEFAULT 'UNKNOWN',
+        quality_score text,
+        quality_status text,
+        quality_details jsonb,
+        image_names jsonb,
+        image_urls jsonb,
+        extraction jsonb,
+        assessment jsonb,
+        review_decisions jsonb,
+        created_at timestamp DEFAULT now(),
+        updated_at timestamp DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS rules_matrix (
+        id serial PRIMARY KEY,
+        rule_id text NOT NULL,
+        version text NOT NULL,
+        title text NOT NULL,
+        source text NOT NULL,
+        purpose text NOT NULL,
+        category text NOT NULL,
+        verification_mode text NOT NULL,
+        field_target text NOT NULL,
+        statutory_threshold text,
+        validation_regex text,
+        applicability_predicate jsonb,
+        active boolean NOT NULL DEFAULT true,
+        created_at timestamp DEFAULT now(),
+        updated_at timestamp DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id serial PRIMARY KEY,
+        inspection_id text NOT NULL,
+        actor_uid text NOT NULL,
+        actor_email text NOT NULL,
+        actor_role text NOT NULL,
+        action text NOT NULL,
+        rule_id text,
+        decision text,
+        reason text,
+        previous_state jsonb,
+        new_state jsonb,
+        hash text,
+        created_at timestamp DEFAULT now()
+      );
+    `);
+
+    // Check if rules_matrix is seeded
+    const countResult = await pool.query('SELECT count(*) FROM rules_matrix');
+    const count = parseInt(countResult.rows[0]?.count || '0', 10);
+    if (count === 0) {
+      console.log(`[COMPLYSCAN] Seeding ${RULES.length} statutory LMPC rules into rules_matrix...`);
+      for (const r of RULES) {
+        await pool.query(
+          `INSERT INTO rules_matrix 
+          (rule_id, version, title, source, purpose, category, verification_mode, field_target, statutory_threshold, validation_regex, applicability_predicate, active)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)`,
+          [
+            r.id,
+            RULESET_VERSION,
+            r.title,
+            r.source,
+            r.purpose,
+            r.category,
+            r.verificationMode,
+            r.fieldTarget || 'general',
+            r.statutoryThreshold || null,
+            r.validationRegex || null,
+            r.applicabilityPredicate ? JSON.stringify(r.applicabilityPredicate) : null,
+          ]
+        );
+      }
+      console.log('[COMPLYSCAN] Successfully seeded LMPC 2011 statutory rules matrix!');
+    }
+    console.log('[COMPLYSCAN] PostgreSQL schema and rules verified successfully.');
+  } catch (err) {
+    console.error('[COMPLYSCAN] PostgreSQL auto-bootstrap failed:', err);
+  }
+}
+
 // Vite / static server integration
 async function startServer() {
+  await ensureDatabaseBootstrap();
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
