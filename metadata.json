@@ -1,0 +1,6 @@
+{
+  "name": "ComplyScan",
+  "description": "Legal Metrology and LMPC packaging compliance screening platform with deterministic statutory evaluation and audit logging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
