@@ -713,6 +713,9 @@ export default function App() {
                   <strong>Drop package views or click to upload</strong>
                   <small>JPG, PNG, or WebP up to 6 panels (Front, Back, Sides)</small>
                 </button>
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 14px', marginTop: '12px', fontSize: '13px', color: '#475569', lineHeight: '1.4' }}>
+                  <strong style={{ color: '#0f172a' }}>📸 Photo Tip:</strong> For bottles, boxes, and pouches, mandatory declarations (MRP, Net Quantity, Dates, Address) are printed on the <em>BACK label</em>. Upload both <strong>Front</strong> and <strong>Back</strong> panels for a complete scan.
+                </div>
                 <input ref={fileInput} hidden type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void addFiles([...(event.target.files || [])])} />
                 {files.length > 0 && <div className="image-queue">{files.map((item, index) => (
                   <article className="image-card" key={item.id}>
@@ -1249,6 +1252,15 @@ function ReviewWorkspace({
         <div><span>Potential Issues</span><strong>{assessment?.counts?.FAIL || 0}</strong></div>
         <div><span>Officer Decisions</span><strong>{decided} / {rules.length}</strong></div>
       </section>
+
+      {(!extraction?.fields?.mrp?.length && !extraction?.fields?.net_quantity?.length && !extraction?.fields?.responsible_entity?.length) && (
+        <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '12px 16px', margin: '16px 0', color: '#92400e', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '20px' }}>💡</span>
+          <div>
+            <strong>Missing Back Panel Evidence:</strong> Only front/cap views were detected. Packaged commodities (shampoos, bottles, cartons) print mandatory declarations (MRP, Net Volume, Batch/Mfg Date, Manufacturer Address) on the <em>back label</em>. Upload photos of both panels for complete statutory verification.
+          </div>
+        </div>
+      )}
 
       <div className="review-grid">
         <div className="review-column">

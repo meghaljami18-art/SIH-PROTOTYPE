@@ -659,7 +659,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
       adapter: 'PostgreSQL (Cloud SQL via Drizzle ORM)',
     },
     vision: {
-      provider: ai ? 'Gemini 3.6 Flash Vision' : 'Multimodal Vision Engine',
+      provider: ai ? 'Gemini Flash Vision Engine' : 'Multimodal Vision Engine',
       configured: Boolean(ai),
     },
     ruleset: {
@@ -850,48 +850,54 @@ app.post('/api/inspections/:id/analyze', async (req: Request, res: Response) => 
         }));
 
         const prompt = `You are COMPLYSCAN, an expert statutory legal metrology inspector evaluating packaged commodities in India under the Legal Metrology (Packaged Commodities) Rules, 2011 (LMPC).
-Extract all mandatory declarations from the provided package image(s) in a single pass:
+Extract all visible statutory declarations and text from the provided package image(s) in a single fast pass:
 0. PRODUCT IDENTITY:
-   - Identify the exact commercial product name, trade description, or item title clearly printed on the principal display panel in the image (e.g. "Head & Shoulders", "Complan", "Ensure", "Comfort", "Maggi", "Soan Papdi", "Optical Mouse", etc.).
-   - Identify the genuine brand name or manufacturer trademark.
+   - Identify the exact commercial product name or title visible in the image (e.g. "Head & Shoulders Anti-Dandruff Shampoo", "Maggi 2-Minute Noodles", "Dettol Soap", etc.).
+   - Genuine brand name visible on the container.
    - Declared commodity category: "${context.commodity_type || 'Packaged Commodity'}".
-   - CRITICAL MANDATE: Never default to or hallucinate "Cinthol" or any placeholder brand unless that specific brand is physically shown on the package in the photo.
-1. Maximum Retail Price (MRP) including currency symbol and inclusive of taxes qualification.
-2. Net Quantity including numeric measure and metric unit.
-3. Manufacturer / Packer / Importer legal entity name and complete postal address.
-4. Manufacturing, Packing, or Import date.
-5. Consumer Care helpline, email, or telephone.
-6. Country of origin.
-7. Any MRP modification sticker if visible.
-Ensure all candidate objects contain exact verbatim evidence_excerpt and high precision confidence scores.`;
+1. Maximum Retail Price (MRP): Look for 'MRP', '₹', 'Rs', 'inclusive of all taxes'.
+2. Net Quantity / Net Volume: Look for any net weight or volume measure anywhere on the package (e.g. '180 ml', '340 ml', '650 ml', '100 g', '1 kg', '1 N', '1 Unit').
+3. Manufacturer / Packer / Importer: Company name and registered office / factory address.
+4. Manufacturing, Packing, or Expiry / Use-by date (e.g. 'Mfg: 04/2026', 'B.No: ...').
+5. Consumer Care details: Phone number, email, or website for consumer complaints.
+6. Country of Origin: E.g., 'Made in India', 'Country of Origin: India'.
+7. RAW TEXT OCR: In 'raw_text_by_image', transcribe ALL lines of text readable on each image so the inspector can see full OCR evidence.
+If an image only shows the front panel or cap, accurately note which sides are visible and extract whatever text appears.`;
 
-        let response;
-        try {
-          response = await ai.models.generateContent({
-            model: 'gemini-3.6-flash',
-            contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: lmpcVisionExtractionSchema,
-            },
-          });
-        } catch (initialErr) {
-          console.warn('Attempting gemini-3.8-flash fallback after error:', initialErr);
-          response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: lmpcVisionExtractionSchema,
-            },
-          });
+        const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-3.6-flash'];
+        let lastErr: any = null;
+
+        for (const modelName of candidateModels) {
+          try {
+            console.log(`[COMPLYSCAN] Invoking vision extraction with ${modelName}...`);
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
+              config: {
+                temperature: 0.1,
+                responseMimeType: 'application/json',
+                responseSchema: lmpcVisionExtractionSchema,
+              },
+            });
+
+            if (response?.text) {
+              extractionResult = JSON.parse(response.text);
+              console.log(`[COMPLYSCAN] Vision extraction succeeded with ${modelName}`);
+              break;
+            }
+          } catch (modelErr: any) {
+            lastErr = modelErr;
+            console.warn(`[COMPLYSCAN] Model ${modelName} transient error (switching to alternate model):`, modelErr?.message || modelErr);
+            // Brief backoff before next model to smooth transient spikes
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
         }
 
-        if (response.text) {
-          extractionResult = JSON.parse(response.text);
+        if (!extractionResult && lastErr) {
+          console.warn('[COMPLYSCAN] All vision models exhausted or unavailable, using heuristic fallback:', lastErr?.message || lastErr);
         }
       } catch (geminiError) {
-        console.warn('Gemini vision extraction error, using heuristic fallback:', geminiError);
+        console.warn('Gemini vision extraction unexpected error:', geminiError);
       }
     }
 

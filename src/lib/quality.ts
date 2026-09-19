@@ -132,9 +132,9 @@ export async function measureImage(
  */
 export async function compressImage(
   file: File,
-  maxWidth = 1600,
-  maxHeight = 1600,
-  quality = 0.85
+  maxWidth = 1200,
+  maxHeight = 1200,
+  quality = 0.8
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
